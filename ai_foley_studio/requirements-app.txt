@@ -1,0 +1,7 @@
+# Install with: python -m pip install -c constraints.txt -r ai_foley_studio/requirements-app.txt
+# The CUDA Torch triplet remains pinned exclusively in ../constraints.txt.
+streamlit==1.67.0
+opencv-python==4.10.0.84
+accelerate==1.2.1
+transformers==4.57.4
+qwen-vl-utils==0.0.14

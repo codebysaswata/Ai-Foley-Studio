@@ -1,0 +1,14 @@
+.venv-vision/
+.venv/
+__pycache__/
+*.py[cod]
+
+temp/*
+!temp/.gitkeep
+
+testing video/
+uploads/*
+!uploads/.gitkeep
+
+.env
+*.log

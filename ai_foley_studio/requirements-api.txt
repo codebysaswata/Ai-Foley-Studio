@@ -1,0 +1,7 @@
+# Install without changing the verified CUDA wheel set:
+# python -m pip install -c constraints.txt -r ai_foley_studio/requirements-api.txt
+fastapi==0.162.6
+pydantic==2.14.3
+uvicorn==0.54.0
+python-multipart==0.0.34
+httpx==0.28.1
