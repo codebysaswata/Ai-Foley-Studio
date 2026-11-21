@@ -1,200 +1,602 @@
-<div align="center">
-<p align="center">
-  <h2>MMAudio</h2>
-  <a href="https://arxiv.org/abs/2412.15322">Paper</a> | <a href="https://hkchengrex.github.io/MMAudio">Webpage</a> | <a href="https://huggingface.co/hkchengrex/MMAudio/tree/main">Models</a> | <a href="https://huggingface.co/spaces/hkchengrex/MMAudio"> Huggingface Demo</a> | <a href="https://colab.research.google.com/drive/1TAaXCY2-kPk4xE4PwKB3EqFbSnkUuzZ8?usp=sharing">Colab Demo</a> | <a href="https://replicate.com/zsxkib/mmaudio">Replicate Demo</a>
-</p>
-</div>
+# AI Foley Studio
 
-## [Taming Multimodal Joint Training for High-Quality Video-to-Audio Synthesis](https://hkchengrex.github.io/MMAudio)
+**Turn silent video into context-aware Foley audio.**
 
-[Ho Kei Cheng](https://hkchengrex.github.io/), [Masato Ishii](https://scholar.google.co.jp/citations?user=RRIO1CcAAAAJ), [Akio Hayakawa](https://scholar.google.com/citations?user=sXAjHFIAAAAJ), [Takashi Shibuya](https://scholar.google.com/citations?user=XCRO260AAAAJ), [Alexander Schwing](https://www.alexander-schwing.de/), [Yuki Mitsufuji](https://www.yukimitsufuji.com/)
+AI Foley Studio is a local video-to-audio application that analyzes
+visual events in a video and uses generative AI to create corresponding
+sound effects. It combines **Qwen3-VL** for visual scene understanding
+with **MMAudio** for video-conditioned audio generation, then assembles
+and processes the generated audio into a soundtrack that can be
+downloaded as WAV or optionally muxed into an MP4.
 
-University of Illinois Urbana-Champaign, Sony AI, and Sony Group Corporation
+> **Project status:** Research / hackathon prototype. The application
+> integrates pretrained models; it does not train the Qwen3-VL or
+> MMAudio foundation models from scratch. Generated results require
+> human review and may not always match every visual event.
 
-CVPR 2025
+------------------------------------------------------------------------
 
-## Highlight
+## What it does
 
-## AI Foley Studio local application
+Given a silent or muted video, AI Foley Studio:
 
-The Streamlit application lives in `ai_foley_studio/` and runs from this
-repository's local MMAudio source and checkpoint directories. From PowerShell
-at the repository root:
+1.  Reads the video metadata and samples frames at regular time
+    intervals.
+2.  Uses Qwen3-VL-2B-Instruct to interpret the sampled frames and
+    produce structured scene and event descriptions.
+3.  Converts the visual analysis into structured Foley context,
+    including actions, objects, materials, environments and estimated
+    timestamps.
+4.  Builds sound-generation prompts from the context using the project's
+    sound rules and prompt engine.
+5.  Divides the source video into manageable, overlapping chunks and
+    runs MMAudio inference sequentially for each chunk.
+6.  Assigns events to the chunks whose time ranges they overlap, then
+    combines the generated audio with short crossfades.
+7.  Checks generated audio for validity and quality issues, applies the
+    configured timing and duration handling, and optionally normalizes
+    loudness.
+8.  Optionally combines the processed soundtrack with the original video
+    and validates the exported MP4.
 
-```powershell
+The goal is to reduce repetitive sound-effect sourcing and
+synchronization work in video post-production. It is an assistive
+workflow, not a replacement for professional sound design or final human
+quality control.
+
+## How it works
+
+### Processing pipeline
+
+``` text
+                 INPUT VIDEO
+                      |
+                      v
+          Video inspection and frame sampling
+                      |
+                      v
+              Qwen3-VL analysis
+          (visual scene + event extraction)
+                      |
+                      v
+        Structured scene/context JSON artifacts
+                      |
+                      v
+          Context validation and event merging
+                      |
+                      v
+          Foley sound-plan and prompt creation
+                      |
+                      v
+           Video split into time chunks
+                      |
+                      v
+         MMAudio inference, one chunk at a time
+                      |
+                      v
+       Chunk waveform checks, retries and reports
+                      |
+                      v
+             Crossfade / audio assembly
+                      |
+                      v
+          Timing alignment and duration fitting
+                      |
+                      v
+         Optional loudness normalization
+                      |
+             +--------+--------+
+             |                 |
+             v                 v
+       Processed WAV       Optional MP4 export
+                                 |
+                                 v
+                         FFprobe validation
+```
+
+### Model responsibilities
+
+  -----------------------------------------------------------------------
+  Component                           Role in this application
+  ----------------------------------- -----------------------------------
+  **Qwen3-VL-2B-Instruct**            Interprets sampled video frames and
+                                      returns structured visual
+                                      scene/event information. It does
+                                      not generate audio.
+
+  **MMAudio**                         Generates audio conditioned on
+                                      video and the text prompt
+                                      constructed for each chunk.
+
+  **MMAudio supporting components**   The integrated MMAudio
+                                      implementation uses its own
+                                      feature-extraction and generation
+                                      stack, including CLIP/Synchformer
+                                      conditioning, flow matching, an
+                                      audio VAE and a vocoder as required
+                                      by the selected model
+                                      configuration.
+  -----------------------------------------------------------------------
+
+Qwen3-VL and MMAudio are loaded in separate stages. The scene-analysis
+model is released before MMAudio inference begins, reducing simultaneous
+GPU memory use.
+
+### Important timing detail
+
+Event timestamps determine which generation chunks receive an event's
+context. The current design does **not** claim sample-accurate placement
+of each individual sound event inside a chunk. MMAudio generates a
+chunk-level soundtrack conditioned on the chunk's video and prompt. The
+assembled result is duration-fitted and can receive a global timing
+offset.
+
+## Features
+
+-   Video upload and preview in a Streamlit interface.
+-   Video metadata inspection and timestamped frame extraction.
+-   Qwen3-VL scene and Foley-event analysis.
+-   Downloadable scene-analysis and sound-context JSON.
+-   Rule-based Foley categorization and prompt construction.
+-   Sequential, chunk-based MMAudio generation for the full source-video
+    timeline.
+-   Event-to-chunk assignment using timestamp overlap.
+-   Short crossfades between adjacent generated chunks.
+-   Waveform checks for malformed, non-finite, unexpectedly short,
+    clipped or near-silent output, with bounded retries according to the
+    quality policy.
+-   Audio inspection, timing offset and duration matching.
+-   Optional two-pass EBU R128 loudness normalization through FFmpeg.
+-   WAV download and optional MP4 export.
+-   Per-job metadata, logs and chunk-level generation diagnostics.
+-   Local model/checkpoint configuration through environment variables.
+
+## Technology stack
+
+  -----------------------------------------------------------------------
+  Area                                Technology
+  ----------------------------------- -----------------------------------
+  Main language                       Python
+
+  User interface                      Streamlit
+
+  HTTP backend                        FastAPI, Uvicorn, Pydantic
+
+  Visual understanding                Hugging Face Transformers,
+                                      Qwen3-VL-2B-Instruct,
+                                      `qwen-vl-utils`
+
+  Audio generation                    MMAudio
+
+  Deep learning                       PyTorch, TorchAudio
+
+  Video/frame processing              OpenCV, PyAV (through the MMAudio
+                                      video pipeline)
+
+  Audio/video tools                   FFmpeg, FFprobe
+
+  Configuration                       Python environment variables and
+                                      project settings
+
+  Tests                               pytest
+  -----------------------------------------------------------------------
+
+**Architecture note:** The repository includes two application
+interfaces:
+
+-   **Streamlit** (`ai_foley_studio/app.py`) is the interactive
+    video-to-Foley application.
+-   **FastAPI** (`ai_foley_studio/api/main.py`) exposes a separate
+    backend API for job-based integration.
+
+The Streamlit workflow can be run independently. Start the FastAPI
+service only when you need the HTTP API or an integration that uses it.
+
+## Repository layout
+
+``` text
+ai_foley_studio/
+├── app.py                       # Streamlit application
+├── config.py                    # Runtime paths and generation settings
+├── pipeline.py                  # Main post-analysis Foley orchestration
+├── requirements-app.txt         # UI and Qwen application dependencies
+├── requirements-api.txt         # FastAPI backend dependencies
+├── api/
+│   ├── main.py                   # FastAPI application entry point
+│   ├── routes.py                 # API endpoints
+│   ├── manager.py                # Job lifecycle and orchestration
+│   ├── settings.py               # Environment-based API settings
+│   ├── schemas.py                # Request/response schemas
+│   ├── security.py               # API token handling
+│   ├── storage.py                # API media/storage helpers
+│   └── store.py                  # Job state storage
+├── audio/
+│   ├── chunked_generation.py    # Chunk planning, generation and assembly
+│   ├── mmaudio_service.py       # MMAudio model lifecycle and inference adapter
+│   ├── audio_processor.py       # Audio inspection and processing
+│   └── synchronizer.py          # Timing and duration alignment
+├── intelligence/
+│   ├── context_engine.py        # Context parsing, validation and event merging
+│   ├── prompt_engine.py         # Generation prompt construction
+│   └── sound_rules.py           # Foley category and ambience rules
+├── video/
+│   ├── processor.py             # Metadata inspection and frame extraction
+│   └── scene_analyzer.py        # Qwen3-VL loading and scene analysis
+├── export/
+│   └── video_exporter.py        # MP4 muxing and output validation
+├── outputs/                     # Generated job artifacts (created at runtime)
+└── temp/                        # Temporary analysis data (created at runtime)
+
+mmaudio/                          # Integrated MMAudio source package
+weights/                          # Local MMAudio checkpoints (not committed)
+ext_weights/                      # Local supporting checkpoints (not committed)
+docs/
+├── FOLEY_PIPELINE.md             # Detailed pipeline contract and implementation notes
+└── BACKEND_DEPLOYMENT.md         # FastAPI backend deployment notes
+tests/                            # Current root-level automated tests
+```
+
+Exact contents may evolve; the tree above highlights the main
+application modules.
+
+## Requirements
+
+The checked-in Windows dependency constraints currently specify:
+
+-   Windows 10/11 (PowerShell commands are shown below).
+-   Python 3.10 or newer is recommended for the application environment.
+-   An NVIDIA GPU with a CUDA-compatible PyTorch installation is
+    strongly recommended for practical local inference.
+-   CUDA toolkit/runtime compatibility with the installed PyTorch wheel
+    and NVIDIA driver.
+-   FFmpeg and FFprobe on `PATH` for video chunk preparation, loudness
+    normalization and MP4 export.
+-   Sufficient disk space for model checkpoints, Hugging Face cache,
+    temporary frames and generated outputs.
+
+**GPU memory varies by selected MMAudio model, precision, video size and
+generation settings.** The repository defaults to `small_16k`, but
+actual compatibility and speed must be tested on the target machine. CPU
+execution may be possible but can be extremely slow.
+
+## Installation (Windows / PowerShell)
+
+### 1. Clone the repository
+
+``` powershell
+git clone https://github.com/codebysaswata/ai_foley_studio.git
+cd ai_foley_studio
+```
+
+### 2. Create and activate a virtual environment
+
+``` powershell
+py -3.10 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+If PowerShell blocks activation, run this for the current terminal
+session and activate again:
+
+``` powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+### 3. Install the pinned PyTorch/CUDA dependencies
+
+The repository's `constraints.txt` currently pins the PyTorch 2.7.1 CUDA
+12.8 package set:
+
+``` powershell
+python -m pip install -c constraints.txt torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchaudio==2.7.1+cu128 --index-url https://download.pytorch.org/whl/cu128
+```
+
+Verify that PyTorch can see the GPU:
+
+``` powershell
+python -c "import torch; print('Torch:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
+
+If the CUDA check fails, resolve the driver / PyTorch wheel
+compatibility before continuing with model inference.
+
+### 4. Install the Streamlit application dependencies
+
+``` powershell
 python -m pip install -c constraints.txt -r ai_foley_studio\requirements-app.txt
+python -m pip install -e .
+```
+
+The editable install installs the MMAudio package and its declared
+dependencies. Install the PyTorch CUDA packages first so pip does not
+replace them with an unintended build.
+
+### 5. Install the FastAPI dependencies (optional)
+
+Only needed if you plan to run the HTTP API:
+
+``` powershell
+python -m pip install -c constraints.txt -r ai_foley_studio\requirements-api.txt
+```
+
+The Streamlit app does not require the FastAPI server to be running.
+
+### 6. Install FFmpeg (for full video workflow)
+
+Install an FFmpeg build that includes both `ffmpeg.exe` and
+`ffprobe.exe`, then add its `bin` directory to the Windows PATH.
+
+Verify:
+
+``` powershell
+ffmpeg -version
+ffprobe -version
+```
+
+Audio WAV generation does not require final MP4 muxing, but this
+pipeline uses FFmpeg to prepare video chunks. MP4 export and loudness
+normalization also require FFmpeg/FFprobe.
+
+### 7. Place the required model checkpoints
+
+The application expects local model checkpoints. They are intentionally
+not included in Git.
+
+For the default `small_16k` configuration, place the files in the
+following locations:
+
+``` text
+weights/
+└── mmaudio_small_16k.pth
+
+ext_weights/
+├── v1-16.pth
+├── best_netG.pt
+└── synchformer_state_dict.pth
+```
+
+Obtain checkpoints only from the relevant official model release and
+verify their terms before downloading or using them. Do not commit model
+weights, Hugging Face caches, private datasets or generated user videos
+to this repository.
+
+Qwen3-VL is loaded through Hugging Face Transformers using model ID
+`Qwen/Qwen3-VL-2B-Instruct`; its files are downloaded/cached on first
+use unless already available locally.
+
+### 8. Configure the model and paths (optional)
+
+The default settings are project-relative. To override them in
+PowerShell:
+
+``` powershell
+$env:AI_FOLEY_MODEL_VARIANT = "small_16k"
+$env:AI_FOLEY_DEFAULT_DURATION = "4.0"
+$env:AI_FOLEY_MAX_DURATION = "8.0"
+$env:AI_FOLEY_NUM_STEPS = "25"
+$env:AI_FOLEY_GUIDANCE_SCALE = "4.5"
+$env:AI_FOLEY_DEVICE = "auto"
+$env:AI_FOLEY_PRECISION = "auto"
+```
+
+See `ai_foley_studio/config.py` and `docs/FOLEY_PIPELINE.md` for
+supported options and checkpoint path overrides.
+
+## Run the application
+
+From the repository root, with the virtual environment activated:
+
+``` powershell
 streamlit run .\ai_foley_studio\app.py
 ```
 
-Verify CUDA before launch with:
+Streamlit prints a local URL (usually `http://localhost:8501`). Open it
+in your browser.
 
-```powershell
-python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+## Run the FastAPI backend (optional)
+
+The FastAPI backend is a separate service from the Streamlit interface.
+Install the API dependencies first, then set a strong local bearer
+token. The token must contain at least 24 characters.
+
+``` powershell
+$env:AI_FOLEY_API_HOST = "127.0.0.1"
+$env:AI_FOLEY_API_PORT = "8000"
+$env:AI_FOLEY_API_TOKEN = "replace-this-with-a-random-secret-of-at-least-24-characters"
+$env:AI_FOLEY_CORS_ORIGINS = "http://localhost:3000"
+$env:AI_FOLEY_API_DATA_DIR = "ai_foley_studio/data"
+
+python -m uvicorn ai_foley_studio.api.main:app --host $env:AI_FOLEY_API_HOST --port $env:AI_FOLEY_API_PORT
 ```
 
-Required local checkpoints are `weights/mmaudio_small_16k.pth` and
-`ext_weights/{v1-16.pth,best_netG.pt,synchformer_state_dict.pth}`. They are
-local-only and intentionally Git-ignored. Qwen3-VL is downloaded separately
-by Transformers when first used; its cache should also remain local-only.
+For local development, the API is then available at
+`http://127.0.0.1:8000`.
 
-On a 4 GB RTX 2050, start with `small_16k` and a four-second duration. The
-application releases Qwen before MMAudio starts, but current output remains a
-single scene-level MMAudio clip, padded with silence for a longer source video.
-FFmpeg and FFprobe are additionally required for final MP4 export; audio-only
-WAV output does not need them. See `docs/FOLEY_PIPELINE.md` for details.
+Useful endpoints:
 
-MMAudio generates synchronized audio given video and/or text inputs.
-Our key innovation is multimodal joint training which allows training on a wide range of audio-visual and audio-text datasets.
-Moreover, a synchronization module aligns the generated audio with the video frames.
+  Endpoint              Purpose
+  --------------------- -------------------------------
+  `GET /health/live`    Liveness check
+  `GET /health/ready`   Readiness check
+  `/docs`               Interactive API documentation
 
-Check out this fun video:
+API requests that require authentication use the configured bearer
+token. Keep the token private; do not commit it or place it in frontend
+source code. For additional deployment and configuration details, see
+`docs/BACKEND_DEPLOYMENT.md` and `.env.example`.
 
-[![Does Your Voice Match Your Face?](https://img.youtube.com/vi/SLz3NWLyHxg/0.jpg)](https://youtu.be/SLz3NWLyHxg)
+The API service is intended to be started separately. Running Streamlit
+does not automatically start Uvicorn, and running Uvicorn does not
+launch the Streamlit interface.
 
-[[Does Your Voice Match Your Face? https://youtu.be/SLz3NWLyHxg]](https://youtu.be/SLz3NWLyHxg)
+## Using AI Foley Studio
 
-## Results
+1.  Upload a supported video file: MP4, MOV, AVI or MKV.
+2.  Preview the original video.
+3.  Select **Analyze Video**. The app inspects the video, samples frames
+    and asks Qwen3-VL to return a scene summary and timestamped
+    sound-producing events.
+4.  Review or download the Scene Analysis JSON and Sound Context JSON.
+5.  Choose the maximum MMAudio chunk length and, optionally, provide a
+    prompt override.
+6.  Select **Generate Foley**. The application validates the context,
+    builds prompts, generates audio chunks sequentially, checks and
+    assembles them, and processes the resulting soundtrack.
+7.  Preview and download the processed WAV.
+8.  Enable **Export final MP4** to mux the processed soundtrack into the
+    source video. This option is available only when both FFmpeg and
+    FFprobe are found.
 
-(All audio from our algorithm MMAudio)
+Each generation job writes a separate output directory with its audio
+artifacts, metadata and log. Inspect the job metadata and chunk reports
+when diagnosing a result.
 
-Videos from Sora:
+## Output artifacts
 
-https://github.com/user-attachments/assets/82afd192-0cee-48a1-86ca-bd39b8c8f330
+A completed job can contain:
 
-Videos from Veo 2:
+  -----------------------------------------------------------------------
+  Artifact                            Description
+  ----------------------------------- -----------------------------------
+  `generated_foley.flac`              Raw assembled audio generated by
+                                      MMAudio
 
-https://github.com/user-attachments/assets/8a11419e-fee2-46e0-9e67-dfb03c48d00e
+  `processed_foley.wav`               Duration-adjusted / processed audio
 
-Videos from MovieGen/Hunyuan Video/VGGSound:
+  `final_video.mp4`                   Optional video with the processed
+                                      soundtrack
 
-https://github.com/user-attachments/assets/29230d4e-21c1-4cf8-a221-c28f2af6d0ca
+  `metadata.json`                     Job configuration, context,
+                                      prompts, stage results and chunk
+                                      diagnostics
 
-For more results, visit https://hkchengrex.com/MMAudio/video_main.html.
+  `logs/pipeline.log`                 Per-job processing log
+  -----------------------------------------------------------------------
 
+The Streamlit analysis stage also saves `scene_analysis.json` and
+`sound_context.json` in its temporary/persistent analysis workspace.
 
-## Installation
+## Configuration and quality controls
 
-We have only tested this on Ubuntu.
+The pipeline exposes controls for:
 
-### Prerequisites
+-   Maximum generation chunk duration.
+-   Optional positive or negative timing offset (through the pipeline
+    CLI/configuration).
+-   Optional prompt override and negative prompt.
+-   MMAudio inference steps and guidance scale.
+-   Optional target loudness (LUFS) and true-peak limit.
+-   Chunk waveform acceptance thresholds and bounded retries.
 
-We recommend using a [miniforge](https://github.com/conda-forge/miniforge) environment.
+The quality checks are guards against malformed or obviously poor
+waveform output; they do not prove that a generated sound is
+semantically correct, realistic or professionally mixed. Always listen
+to and review the result.
 
-- Python 3.9+
-- PyTorch **2.5.1+** and corresponding torchvision/torchaudio (pick your CUDA version https://pytorch.org/, pip install recommended)
-<!-- - ffmpeg<7 ([this is required by torchaudio](https://pytorch.org/audio/master/installation.html#optional-dependencies), you can install it in a miniforge environment with `conda install -c conda-forge 'ffmpeg<7'`) -->
+For the detailed input JSON contract, chunk strategy, runtime settings
+and known timing constraints, see
+[docs/FOLEY_PIPELINE.md](docs/FOLEY_PIPELINE.md).
 
-**1. Install prerequisite if not yet met:**
+## Testing
 
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 --upgrade
+Run the current root-level automated test suite from the repository
+root:
+
+``` powershell
+python -m pytest .\tests -q
 ```
 
-(Or any other CUDA versions that your GPUs/driver support)
+Install the application and API dependencies before running the full
+suite. Some scene-analysis tests import the Transformers/Qwen
+integration, so the application requirements must be installed.
 
-<!-- ```
-conda install -c conda-forge 'ffmpeg<7
-```
-(Optional, if you use miniforge and don't already have the appropriate ffmpeg) -->
+The repository also contains older scripts under
+`ai_foley_studio/tests/`. They include manual or legacy tests with
+outdated import paths and are not part of the root-level pytest command
+above. Do not use `python -m pytest -q` as a blanket discovery command
+unless those legacy scripts have first been migrated or excluded through
+pytest configuration.
 
-**2. Clone our repository:**
+Tests cover areas such as API/backend contracts, context and prompt
+generation, scene-analysis parsing, model lifecycle, chunked generation,
+audio processing and export. They do not replace an end-to-end quality
+evaluation using representative real videos and the required model
+checkpoints.
 
-```bash
-git clone https://github.com/hkchengrex/MMAudio.git
-```
+## Known limitations
 
-**3. Install with pip (install pytorch first before attempting this!):**
+-   Visual analysis is based on sampled frames, not continuous,
+    frame-by-frame video understanding. Brief actions between sampled
+    frames can be missed.
+-   Qwen3-VL estimates event timing from sampled timestamps; event times
+    are not guaranteed to be exact.
+-   MMAudio generates a chunk-level soundtrack. Event timestamps select
+    relevant chunk context but do not guarantee sample-accurate sound
+    placement within each chunk.
+-   Generated audio can contain incorrect, missing, unexpected or
+    low-quality sounds. Human review is required.
+-   Crossfades reduce hard joins but cannot guarantee perfect acoustic
+    continuity across chunk boundaries.
+-   Longer videos increase inference time and may increase storage and
+    processing requirements.
+-   Results depend on the selected checkpoint, GPU, precision, sampling
+    settings and input video.
+-   The current application is a prototype and has not been established
+    as a production-grade commercial service.
 
-```bash
-cd MMAudio
-pip install -e .
-```
+## Privacy and data handling
 
-(If you encounter the File "setup.py" not found error, upgrade your pip with pip install --upgrade pip)
+The primary workflow runs locally. Video frames, analysis JSON files,
+generated audio and job outputs are written to local working
+directories. Qwen3-VL model files may be downloaded from Hugging Face on
+first use and cached locally. Review the model-loading and environment
+configuration before using confidential footage, and do not upload
+private media or credentials to public repositories.
 
+## Model, dataset and licensing notice
 
-**Pretrained models:**
+This repository contains an integration of third-party software and
+pretrained models. Their licences are separate and must be followed
+independently.
 
-The models will be downloaded automatically when you run the demo script. MD5 checksums are provided in `mmaudio/utils/download_utils.py`.
-The models are also available at https://huggingface.co/hkchengrex/MMAudio/tree/main
-See [MODELS.md](docs/MODELS.md) for more details.
+-   **MMAudio source code:** See the upstream [MMAudio
+    repository](https://github.com/hkchengrex/MMAudio) and its licence.
+-   **MMAudio pretrained checkpoints:** The upstream project identifies
+    its released checkpoints as **CC BY-NC 4.0**. This is a
+    non-commercial licence; do not assume that the checkpoints can be
+    used in a paid product or commercial deployment. Obtain separate
+    permission or a commercially suitable model/checkpoint before
+    commercial use.
+-   **Qwen3-VL:** Review the [Qwen3-VL model
+    card](https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct) and the
+    applicable model licence for the exact checkpoint and use case.
+-   **Datasets:** Upstream models may have been trained on datasets with
+    different terms. This project does not claim that all training data
+    or generated outputs are copyright-free.
+-   **Other dependencies:** Review the licence of each third-party
+    package, model, vocoder and supporting component distributed or used
+    with this project.
 
-## Demo
+The top-level MIT licence in this repository does **not** override
+third-party model, checkpoint, dataset or dependency licences. This
+README is not legal advice.
 
-By default, these scripts use the `large_44k_v2` model. 
-In our experiments, inference only takes around 6GB of GPU memory (in 16-bit mode) which should fit in most modern GPUs.
+## Research reference
 
-### Command-line interface
+MMAudio: *Taming Multimodal Joint Training for High-Quality
+Video-to-Audio Synthesis*, CVPR 2025.
 
-With `demo.py`
+-   [Paper](https://arxiv.org/abs/2412.15322)
+-   [Official MMAudio repository](https://github.com/hkchengrex/MMAudio)
+-   [Official MMAudio model
+    releases](https://huggingface.co/hkchengrex/MMAudio)
+-   [Qwen3-VL model](https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct)
 
-```bash
-python demo.py --duration=8 --video=<path to video> --prompt "your prompt" 
-```
+If you use the MMAudio research implementation, cite the original work:
 
-The output (audio in `.flac` format, and video in `.mp4` format) will be saved in `./output`.
-See the file for more options.
-Simply omit the `--video` option for text-to-audio synthesis.
-The default output (and training) duration is 8 seconds. Longer/shorter durations could also work, but a large deviation from the training duration may result in a lower quality.
-
-### Gradio interface
-
-Supports video-to-audio and text-to-audio synthesis.
-You can also try experimental image-to-audio synthesis which duplicates the input image to a video for processing. This might be interesting to some but it is not something MMAudio has been trained for.
-Use [port forwarding](https://unix.stackexchange.com/questions/115897/whats-ssh-port-forwarding-and-whats-the-difference-between-ssh-local-and-remot) (e.g., `ssh -L 7860:localhost:7860 server`) if necessary. The default port is `7860` which you can specify with `--port`.
-
-```bash
-python gradio_demo.py
-```
-
-### FAQ
-
-1. Video processing
-    - Processing higher-resolution videos takes longer due to encoding and decoding (which can take >95% of the processing time!), but it does not improve the quality of results.
-    - The CLIP encoder resizes input frames to 384×384 pixels. 
-    - Synchformer resizes the shorter edge to 224 pixels and applies a center crop, focusing only on the central square of each frame.
-2. Frame rates
-    - The CLIP model operates at 8 FPS, while Synchformer works at 25 FPS.
-    - Frame rate conversion happens on-the-fly via the video reader.
-    - For input videos with a frame rate below 25 FPS, frames will be duplicated to match the required rate.
-3. Failure cases
-As with most models of this type, failures can occur, and the reasons are not always clear. Below are some known failure modes. If you notice a failure mode or believe there’s a bug, feel free to open an issue in the repository.
-4. Performance variations
-We notice that there can be subtle performance variations in different hardware and software environments. Some of the reasons include using/not using `torch.compile`, video reader library/backend, inference precision, batch sizes, random seeds, etc. We (will) provide pre-computed results on standard benchmark for reference. Results obtained from this codebase should be similar but might not be exactly the same.
-
-### Known limitations
-
-1. The model sometimes generates unintelligible human speech-like sounds
-2. The model sometimes generates background music (without explicit training, it would not be high quality)
-3. The model struggles with unfamiliar concepts, e.g., it can generate "gunfires" but not "RPG firing".
-
-We believe all of these three limitations can be addressed with more high-quality training data.
-
-## Training
-
-See [TRAINING.md](docs/TRAINING.md).
-
-## Evaluation
-
-See [EVAL.md](docs/EVAL.md).
-
-## Training Datasets
-
-MMAudio was trained on several datasets, including [AudioSet](https://research.google.com/audioset/), [Freesound](https://github.com/LAION-AI/audio-dataset/blob/main/laion-audio-630k/README.md), [VGGSound](https://www.robots.ox.ac.uk/~vgg/data/vggsound/), [AudioCaps](https://audiocaps.github.io/), and [WavCaps](https://github.com/XinhaoMei/WavCaps). These datasets are subject to specific licenses, which can be accessed on their respective websites. We do not guarantee that the pre-trained models are suitable for commercial use. Please use them at your own risk.
-
-## Update Logs
-
-- 2025-03-09: Uploaded the corrected tsv files. See [TRAINING.md](docs/TRAINING.md).
-- 2025-02-27: Disabled the GradScaler by default to improve training stability. See #49.
-- 2024-12-23: Added training and batch evaluation scripts.
-- 2024-12-14: Removed the `ffmpeg<7` requirement for the demos by replacing `torio.io.StreamingMediaDecoder` with `pyav` for reading frames. The read frames are also cached, so we are not reading the same frames again during reconstruction. This should speed things up and make installation less of a hassle.
-- 2024-12-13: Improved for-loop processing in CLIP/Sync feature extraction by introducing a batch size multiplier. We can approximately use 40x batch size for CLIP/Sync without using more memory, thereby speeding up processing. Removed VAE encoder during inference -- we don't need it.
-- 2024-12-11: Replaced `torio.io.StreamingMediaDecoder` with `pyav` for reading framerate when reconstructing the input video. `torio.io.StreamingMediaDecoder` does not work reliably in huggingface ZeroGPU's environment, and I suspect that it might not work in some other environments as well.
-
-## Citation
-
-```bibtex
+``` bibtex
 @inproceedings{cheng2025taming,
   title={{MMAudio}: Taming Multimodal Joint Training for High-Quality Video-to-Audio Synthesis},
   author={Cheng, Ho Kei and Ishii, Masato and Hayakawa, Akio and Shibuya, Takashi and Schwing, Alexander and Mitsufuji, Yuki},
@@ -203,29 +605,14 @@ MMAudio was trained on several datasets, including [AudioSet](https://research.g
 }
 ```
 
-## Relevant Repositories
+## Acknowledgements
 
-- [av-benchmark](https://github.com/hkchengrex/av-benchmark) for benchmarking results.
+This project builds on the work of the MMAudio authors and the
+developers of Qwen3-VL, PyTorch, Transformers, Streamlit, OpenCV, FFmpeg
+and the other open-source dependencies used in the pipeline. Please
+consult the upstream projects for their publications, licences and
+attribution requirements.
 
-## License
-- The code in this repository is released under the MIT license as found in the [LICENSE file](LICENSE)
-- The checkpoints are released on Hugging Face under the CC-BY-NC 4.0 license as found at [https://creativecommons.org/licenses/by-nc/4.0/](https://creativecommons.org/licenses/by-nc/4.0/).
+------------------------------------------------------------------------
 
-## Disclaimer
-
-We have no affiliation with and have no knowledge of the party behind the domain "mmaudio.net".
-
-## Acknowledgement
-
-Many thanks to:
-- [Make-An-Audio 2](https://github.com/bytedance/Make-An-Audio-2) for the 16kHz BigVGAN pretrained model and the VAE architecture
-- [BigVGAN](https://github.com/NVIDIA/BigVGAN)
-- [Synchformer](https://github.com/v-iashin/Synchformer) 
-- [EDM2](https://github.com/NVlabs/edm2) for the magnitude-preserving VAE network architecture
-
-
-
-
-## Contributor
-
-Contribution by Riddhiman Adak.
+**AI Foley Studio --- from visual events to generated Foley sound.**
